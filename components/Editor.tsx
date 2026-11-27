@@ -97,6 +97,7 @@ export function Editor() {
   const ed = useEditor();
   const [tab, setTab] = useState<ToolTab>('subtitle');
   const [mobileTab, setMobileTab] = useState<ToolTab>('subtitle');
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
 
@@ -196,9 +197,18 @@ export function Editor() {
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setMobileTab(t.id)}
-                  className={`flex min-h-[36px] shrink-0 items-center gap-1 rounded-full border px-3 text-[11.5px] font-semibold transition ${
-                    mobileTab === t.id ? 'border-lime-400/40 bg-lime-400/15 text-lime-200' : 'border-white/10 bg-white/[0.03] text-slate-300'
+                  onClick={() => {
+                    if (mobileTab === t.id && sheetOpen) {
+                      setSheetOpen(false);
+                      return;
+                    }
+                    setMobileTab(t.id);
+                    setSheetOpen(true);
+                  }}
+                  className={`flex min-h-[40px] shrink-0 items-center gap-1 rounded-full border px-3.5 text-[12px] font-semibold transition ${
+                    sheetOpen && mobileTab === t.id
+                      ? 'border-lime-400/40 bg-lime-400/15 text-lime-200'
+                      : 'border-white/10 bg-white/[0.03] text-slate-300'
                   }`}
                 >
                   <span>{t.icon}</span>
@@ -208,14 +218,26 @@ export function Editor() {
               <button
                 type="button"
                 onClick={() => setTimelineOpen((v) => !v)}
-                className="ml-auto flex min-h-[36px] shrink-0 items-center rounded-full border border-white/10 px-3 text-[11px] text-slate-300"
+                className={`ml-auto flex min-h-[40px] shrink-0 items-center rounded-full border px-3 text-[11.5px] ${
+                  timelineOpen ? 'border-lime-400/40 bg-lime-400/15 text-lime-200' : 'border-white/10 text-slate-300'
+                }`}
               >
                 타임라인 {timelineOpen ? '▾' : '▸'}
               </button>
             </div>
-            <div className="scroll-thin min-h-[120px] flex-1 overflow-y-auto border-t border-white/[0.05] bg-ink-950/40">
-              <ToolContent tab={mobileTab} />
-            </div>
+            {sheetOpen && (
+              <div className="scroll-thin max-h-[46dvh] min-h-[160px] flex-1 overflow-y-auto border-t border-white/[0.05] bg-ink-950/60">
+                <div className="sticky top-0 z-10 flex items-center justify-between bg-ink-950/80 px-3 py-1 backdrop-blur">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                    {TAB_META.find((t) => t.id === mobileTab)?.name} 도구
+                  </span>
+                  <button type="button" onClick={() => setSheetOpen(false)} className="px-2 py-1 text-[11px] text-slate-400" aria-label="도구 접기">
+                    접기 ▾
+                  </button>
+                </div>
+                <ToolContent tab={mobileTab} />
+              </div>
+            )}
             <div className={`shrink-0 overflow-hidden transition-[height] ${timelineOpen ? 'h-[210px]' : 'h-0'}`}>
               <Timeline compact />
             </div>
