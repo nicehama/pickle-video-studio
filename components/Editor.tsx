@@ -191,7 +191,7 @@ export function Editor() {
           </div>
 
           {/* 모바일: 도구 시트 + 접이식 타임라인 */}
-          <div className="flex min-h-0 flex-1 flex-col lg:hidden">
+          <div className="flex shrink-0 flex-col lg:hidden">
             <div className="scroll-thin flex items-center gap-1 overflow-x-auto border-t border-white/[0.07] px-2 py-1.5">
               {TAB_META.map((t) => (
                 <button
