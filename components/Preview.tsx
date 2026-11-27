@@ -91,22 +91,23 @@ export function Preview() {
             }`}
             style={{ aspectRatio: aspect === '9:16' ? '9 / 16' : '16 / 9' }}
           />
-          <button
-            type="button"
-            hidden={aspect !== '9:16'}
-            onClick={(e) => {
-              e.stopPropagation();
-              ed.commit((p) => ({ ...p, safeZone: !p.safeZone }));
-            }}
-            className={`absolute right-3 top-3 rounded-lg border px-2 py-1.5 text-[10.5px] font-semibold backdrop-blur transition ${
-              ed.project.safeZone
-                ? 'border-rose-400/40 bg-rose-500/15 text-rose-200'
-                : 'border-white/15 bg-black/40 text-slate-300 hover:bg-black/60'
-            }`}
-            aria-pressed={ed.project.safeZone}
-          >
-            안전영역 {ed.project.safeZone ? 'ON' : 'OFF'}
-          </button>
+          {aspect === '9:16' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                ed.commit((p) => ({ ...p, safeZone: !p.safeZone }));
+              }}
+              className={`absolute right-3 top-3 hidden rounded-lg border px-2 py-1.5 text-[10.5px] font-semibold backdrop-blur transition lg:block ${
+                ed.project.safeZone
+                  ? 'border-rose-400/40 bg-rose-500/15 text-rose-200'
+                  : 'border-white/15 bg-black/40 text-slate-300 hover:bg-black/60'
+              }`}
+              aria-pressed={ed.project.safeZone}
+            >
+              안전영역 {ed.project.safeZone ? 'ON' : 'OFF'}
+            </button>
+          )}
           {!playing && (
             <button
               type="button"
@@ -136,6 +137,18 @@ export function Preview() {
             <span className="hidden items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/10 px-2 py-1 text-[10.5px] text-violet-200 sm:flex">
               🎙 성우 발화 중 · 덕킹
             </span>
+          )}
+          {aspect === '9:16' && (
+            <button
+              type="button"
+              onClick={() => ed.commit((p) => ({ ...p, safeZone: !p.safeZone }))}
+              aria-pressed={ed.project.safeZone}
+              className={`flex h-9 items-center gap-1 rounded-lg border px-2 text-[10.5px] font-semibold lg:hidden ${
+                ed.project.safeZone ? 'border-rose-400/40 bg-rose-500/15 text-rose-200' : 'border-white/10 bg-white/[0.03] text-slate-400'
+              }`}
+            >
+              안전영역 {ed.project.safeZone ? 'ON' : 'OFF'}
+            </button>
           )}
           <button
             type="button"

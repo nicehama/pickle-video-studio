@@ -288,7 +288,7 @@ function drawSafeZone(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.lineWidth = Math.max(2, w * 0.004);
   for (const z of zones) {
     ctx.strokeStyle = 'rgba(255,92,122,0.85)';
-    ctx.fillStyle = 'rgba(255,92,122,0.13)';
+    ctx.fillStyle = 'rgba(255,92,122,0.07)';
     ctx.fillRect(z.x, z.y, z.w, z.h);
     ctx.strokeRect(z.x, z.y, z.w, z.h);
     ctx.fillStyle = 'rgba(255,214,222,0.95)';
