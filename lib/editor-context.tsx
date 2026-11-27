@@ -2,9 +2,10 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { audioEngine, sfxParamFor } from './audio-engine';
-import { createSampleProject, uid } from './data';
-import { clipEnd, projectDuration } from './editor-ops';
-import type { Clip, MediaAsset, Project, TrackId } from './types';
+import { createEmptyProject, createSampleProject, uid } from './data';
+import { clipEnd, projectDuration, setFraming } from './editor-ops';
+import { clearAll, loadAssets, loadSaved, saveAsset, saveProject } from './persist';
+import type { Clip, Framing, MediaAsset, Project, TrackId } from './types';
 import { speak, type SpeakHandle } from './tts';
 
 /* --------------------------------------------------------------- */
@@ -48,6 +49,8 @@ export interface Toast {
   kind?: 'ok' | 'warn' | 'info';
 }
 
+export type SaveState = 'loading' | 'saved' | 'saving' | 'error';
+
 interface EditorApi {
   project: Project;
   commit: (fn: (p: Project) => Project, label?: string) => void;
@@ -56,6 +59,17 @@ interface EditorApi {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /** IndexedDB 자동 저장 상태 */
+  saveState: SaveState;
+  savedAt: number | null;
+  hydrated: boolean;
+  saveNow: () => void;
+  resetProject: (kind: 'empty' | 'sample' | 'clear') => void;
+  /** 드래그·슬라이더처럼 연속된 변경을 한 번의 실행 취소로 묶는다 */
+  liveBegin: () => void;
+  liveCommit: (fn: (p: Project) => Project) => void;
+  liveEnd: () => void;
+  setClipFraming: (clipId: string, patch: Partial<Framing>) => void;
   selectedId: string | null;
   select: (id: string | null) => void;
   assets: MediaAsset[];
@@ -91,6 +105,11 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [caps, setCaps] = useState({ tts: 'browser', sfx: 'synth', translate: 'demo' });
   const [voicesReady, setVoicesReady] = useState(0);
+  const [saveState, setSaveState] = useState<SaveState>('loading');
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  const liveBase = useRef<Project | null>(null);
+  const liveTimer = useRef<number | null>(null);
   const videos = useRef<Map<string, HTMLVideoElement>>(new Map());
   const time = useMemo(() => new TimeStore(), []);
   const rafRef = useRef<number | null>(null);
@@ -149,6 +168,48 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     setPast((h) => [...h, cur]);
     setProject(next);
   }, [future]);
+
+  /* ------------------- 연속 변경(드래그) 한 번에 묶기 ------------------- */
+  const liveEnd = useCallback(() => {
+    if (liveTimer.current) {
+      window.clearTimeout(liveTimer.current);
+      liveTimer.current = null;
+    }
+    const base = liveBase.current;
+    liveBase.current = null;
+    if (base && base !== projectRef.current) {
+      setPast((h) => [...h.slice(-49), base]);
+      setFuture([]);
+    }
+  }, []);
+
+  const liveBegin = useCallback(() => {
+    if (!liveBase.current) liveBase.current = projectRef.current;
+    if (liveTimer.current) {
+      window.clearTimeout(liveTimer.current);
+      liveTimer.current = null;
+    }
+  }, []);
+
+  const liveCommit = useCallback(
+    (fn: (p: Project) => Project) => {
+      liveBegin();
+      const next = fn(projectRef.current);
+      if (next === projectRef.current) return;
+      projectRef.current = next;
+      setProject(next);
+      if (liveTimer.current) window.clearTimeout(liveTimer.current);
+      liveTimer.current = window.setTimeout(() => liveEnd(), 550);
+    },
+    [liveBegin, liveEnd],
+  );
+
+  const setClipFraming = useCallback(
+    (clipId: string, patch: Partial<Framing>) => {
+      liveCommit((p) => setFraming(p, clipId, p.aspect, patch));
+    },
+    [liveCommit],
+  );
 
   /* ------------------------- 재생 루프 ------------------------- */
   const stopSpeaking = useCallback(() => {
@@ -271,9 +332,10 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const added: MediaAsset[] = [];
+      let unsaved = 0;
       for (const file of list) {
         const url = URL.createObjectURL(file);
-        const id = uid('asset');
+        const id = `a${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 7)}`;
         const duration = await new Promise<number>((resolve) => {
           if (file.type.startsWith('video/')) {
             const v = document.createElement('video');
@@ -300,8 +362,12 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
           }
         });
         added.push({ id, name: file.name, kind: 'local', src: url, duration });
+        // 새로고침해도 남도록 파일 자체를 IndexedDB에 담는다 (용량 초과면 프로젝트만 저장)
+        const ok = await saveAsset({ id, name: file.name, mime: file.type, duration, blob: file });
+        if (!ok) unsaved++;
       }
       setAssets((prev) => [...prev, ...added]);
+      if (unsaved) toast(`${unsaved}개 파일은 용량이 커서 다음 접속 시 다시 올려야 합니다`, 'warn');
       const first = added[0];
       commit((p) => ({
         ...p,
@@ -321,6 +387,109 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       if (first) toast(`${added.length}개 파일을 타임라인에 추가했습니다`);
     },
     [commit, time, toast],
+  );
+
+  /* ------------------- 자동 저장 · 복원 (IndexedDB) ------------------- */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const saved = await loadSaved();
+        if (alive && saved) {
+          const p = normalizeProject(saved.project);
+          projectRef.current = p;
+          setProject(p);
+          setPast([]);
+          setFuture([]);
+          setSavedAt(saved.savedAt || Date.now());
+          setSaveState('saved');
+          const stored = await loadAssets();
+          if (alive && stored.length) {
+            const restored: MediaAsset[] = [];
+            for (const a of stored) {
+              if (!a.blob) continue;
+              const url = URL.createObjectURL(a.blob);
+              if (a.mime?.startsWith('video/')) {
+                const v = document.createElement('video');
+                v.preload = 'metadata';
+                v.src = url;
+                v.muted = true;
+                v.playsInline = true;
+                videos.current.set(a.id, v);
+              }
+              restored.push({ id: a.id, name: a.name, kind: 'local', src: url, duration: a.duration });
+            }
+            if (restored.length) setAssets(restored);
+          }
+        }
+      } catch {
+        /* 저장된 프로젝트가 깨져 있으면 새 프로젝트로 시작한다 */
+      }
+      if (alive) setHydrated(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /* 프로젝트가 바뀔 때마다 0.6초 뒤에 자동 저장 */
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    setSaveState('saving');
+    const t = window.setTimeout(async () => {
+      try {
+        const at = await saveProject(project);
+        if (cancelled) return;
+        setSavedAt(at);
+        setSaveState('saved');
+      } catch {
+        if (!cancelled) setSaveState('error');
+      }
+    }, 600);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [project, hydrated]);
+
+  const saveNow = useCallback(() => {
+    setSaveState('saving');
+    saveProject(projectRef.current)
+      .then((at) => {
+        setSavedAt(at);
+        setSaveState('saved');
+      })
+      .catch(() => setSaveState('error'));
+  }, []);
+
+  const resetProject = useCallback(
+    (kind: 'empty' | 'sample' | 'clear') => {
+      pause();
+      time.set(0);
+      setSelectedId(null);
+      setPast([]);
+      setFuture([]);
+      liveBase.current = null;
+      if (kind === 'clear') {
+        void clearAll();
+        assets.forEach((a) => a.src && URL.revokeObjectURL(a.src));
+        videos.current.forEach((v) => v.pause());
+        videos.current.clear();
+        setAssets([]);
+      }
+      const p = kind === 'sample' ? createSampleProject() : createEmptyProject();
+      projectRef.current = p;
+      setProject(p);
+      const persist = kind === 'clear' ? clearAll().then(() => saveProject(p)) : saveProject(p);
+      persist
+        .then((at) => {
+          setSavedAt(at);
+          setSaveState('saved');
+        })
+        .catch(() => setSaveState('error'));
+    },
+    [assets, pause, time],
   );
 
   /* --------------------- 서버 기능 지원 여부 --------------------- */
@@ -359,6 +528,15 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     redo,
     canUndo: past.length > 0,
     canRedo: future.length > 0,
+    saveState,
+    savedAt,
+    hydrated,
+    saveNow,
+    resetProject,
+    liveBegin,
+    liveCommit,
+    liveEnd,
+    setClipFraming,
     selectedId,
     select: setSelectedId,
     assets,
@@ -378,4 +556,20 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   };
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
+}
+
+/** 저장된 프로젝트를 읽을 때 빠진 필드를 보충한다(버전이 달라도 열리도록) */
+function normalizeProject(p: Project): Project {
+  const clips = (Array.isArray(p.clips) ? p.clips : [])
+    .filter((c): c is Clip => !!c && typeof c.id === 'string' && typeof c.start === 'number' && typeof c.duration === 'number')
+    .map((c) => ({ ...c, duration: Math.max(0.05, c.duration) }));
+  return {
+    title: typeof p.title === 'string' && p.title ? p.title : '저장된 프로젝트',
+    aspect: p.aspect === '16:9' ? '16:9' : '9:16',
+    clips,
+    safeZone: p.safeZone !== false,
+    lang: p.lang ?? 'ko',
+    subtitlePreset: p.subtitlePreset === 'longform' ? 'longform' : 'shorts',
+    music: p.music !== false,
+  };
 }

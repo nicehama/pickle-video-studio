@@ -1,5 +1,6 @@
 import { FONT_STACK, SUBTITLE_PRESETS, sceneByKey, SCENES } from './data';
-import type { Clip, Lang, Project } from './types';
+import { framingFor } from './editor-ops';
+import type { Clip, Framing, Lang, Project } from './types';
 
 export interface FrameContext {
   project: Project;
@@ -173,13 +174,43 @@ function withAlpha(hex: string, a: number) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-function drawCover(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, w: number, h: number) {
-  const vw = video.videoWidth || 16;
-  const vh = video.videoHeight || 9;
-  const scale = Math.max(w / vw, h / vh);
-  const dw = vw * scale;
-  const dh = vh * scale;
-  ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
+/**
+ * 원본을 비율에 맞게 꽉 채워(cover) 그리되, 클립의 프레이밍(확대·이동)을 적용한다.
+ * x·y는 캔버스 크기 대비 비율, scale은 1 이상. 넘치는 만큼만 움직여 빈 여백이 생기지 않게 한다.
+ */
+function drawCoverFramed(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  source: CanvasImageSource,
+  sw: number,
+  sh: number,
+  framing?: Framing,
+) {
+  const f = framing ?? { x: 0, y: 0, scale: 1 };
+  const scale = Math.max(w / sw, h / sh) * Math.max(1, f.scale);
+  const dw = sw * scale;
+  const dh = sh * scale;
+  const slackX = Math.max(0, (dw - w) / 2);
+  const slackY = Math.max(0, (dh - h) / 2);
+  const dx = (w - dw) / 2 + clamp(f.x * w, -slackX, slackX);
+  const dy = (h - dh) / 2 + clamp(f.y * h, -slackY, slackY);
+  ctx.drawImage(source, dx, dy, dw, dh);
+}
+
+let sceneCanvas: HTMLCanvasElement | null = null;
+function drawSceneFramed(ctx: CanvasRenderingContext2D, w: number, h: number, sceneKey: string | undefined, time: number, framing?: Framing) {
+  if (typeof document === 'undefined') return;
+  if (!sceneCanvas) sceneCanvas = document.createElement('canvas');
+  if (sceneCanvas.width !== w || sceneCanvas.height !== h) {
+    sceneCanvas.width = w;
+    sceneCanvas.height = h;
+  }
+  const sctx = sceneCanvas.getContext('2d');
+  if (!sctx) return;
+  sctx.clearRect(0, 0, w, h);
+  drawScene(sctx, w, h, sceneKey, time);
+  drawCoverFramed(ctx, w, h, sceneCanvas, w, h, framing);
 }
 
 export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number): string[] {
@@ -315,7 +346,12 @@ function drawBadges(ctx: CanvasRenderingContext2D, w: number, h: number, project
   ctx.font = `600 ${fs}px ${FONT_STACK.ko}`;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  const label = active ? `클립 · ${active.label}` : '클립 없음';
+  const framing = active ? framingFor(active, project.aspect) : null;
+  const framed =
+    !!framing && (Math.abs(framing.x) > 0.001 || Math.abs(framing.y) > 0.001 || Math.abs(framing.scale - 1) > 0.001);
+  const label = active
+    ? `클립 · ${active.label}${framed && framing ? ` · ${project.aspect} ×${framing.scale.toFixed(1)}` : ''}`
+    : '클립 없음';
   const padding = fs * 0.55;
   const tw = ctx.measureText(label).width + padding * 2;
   ctx.fillStyle = 'rgba(8,10,16,0.62)';
@@ -352,10 +388,11 @@ export function drawFrame(ctx: CanvasRenderingContext2D, w: number, h: number, f
 
   const videoClip = activeClipAt(project, 'video', time);
   const videoEl = videoClip?.mediaId ? fc.videos?.get(videoClip.mediaId) : undefined;
+  const framing = videoClip ? framingFor(videoClip, project.aspect) : undefined;
   if (videoEl && videoEl.readyState >= 2) {
-    drawCover(ctx, videoEl, w, h);
+    drawCoverFramed(ctx, w, h, videoEl, videoEl.videoWidth || 16, videoEl.videoHeight || 9, framing);
   } else {
-    drawScene(ctx, w, h, videoClip?.sceneKey, time);
+    drawSceneFramed(ctx, w, h, videoClip?.sceneKey, time, framing);
   }
 
   drawSubtitle(ctx, w, h, project, time);

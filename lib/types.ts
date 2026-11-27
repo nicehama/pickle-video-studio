@@ -1,4 +1,17 @@
 export type Aspect = '16:9' | '9:16';
+
+/** 비율별 화면 프레이밍 — 원본 파일은 그대로 두고 보여 주는 창만 바꾼다 */
+export interface Framing {
+  /** 좌우 이동 (캔버스 너비 대비 비율, -0.5 ~ 0.5) */
+  x: number;
+  /** 상하 이동 (캔버스 높이 대비 비율, -0.5 ~ 0.5) */
+  y: number;
+  /** 확대 배율 (1 = 꽉 채움, 최대 3배) */
+  scale: number;
+}
+
+export const DEFAULT_FRAMING: Framing = { x: 0, y: 0, scale: 1 };
+export const FRAMING_LIMIT = { x: 0.5, y: 0.5, scaleMin: 1, scaleMax: 3 } as const;
 export type TrackId = 'video' | 'subtitle' | 'voice' | 'sfx' | 'bgm';
 export type Lang = 'ko' | 'en' | 'ja' | 'es';
 export type Tone = 'calm' | 'bright' | 'doc' | 'shorts';
@@ -43,6 +56,8 @@ export interface Clip {
   mediaId?: string;
   inPoint?: number;
   sceneKey?: string;
+  /** 클립마다 16:9 · 9:16 프레이밍을 따로 저장한다(원본 불변) */
+  framing?: Partial<Record<Aspect, Framing>>;
   /** subtitle */
   text?: string;
   lang?: Lang;
