@@ -5,7 +5,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Pickle Studio — 블로 스타일 웹 영상편집기',
   description:
-    'PC·모바일 겸용 웹 영상편집기 1차 프로토타입. 롱폼↔숏폼 원클릭 전환, AI 성우(TTS), 감정별 효과음, 다국어 자막, WebM 내보내기까지 브라우저에서 동작합니다.',
+    'PC·모바일 겸용 웹 영상편집기 2차 프로토타입. 롱폼↔숏폼 원클릭 전환, AI 성우(TTS), 감정별 효과음, 다국어 자막, WebM 내보내기까지 브라우저에서 동작합니다.',
   applicationName: 'Pickle Studio',
   themeColor: '#07080d',
 };
