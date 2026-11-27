@@ -185,7 +185,7 @@ export function Editor() {
           <Preview />
 
           {/* 데스크톱 타임라인 */}
-          <div className="hidden h-[302px] min-h-0 shrink-0 flex-col lg:flex">
+          <div className="hidden h-[338px] min-h-0 shrink-0 flex-col lg:flex">
             <Timeline />
           </div>
 

@@ -104,14 +104,49 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, sceneKey
     }
   }
 
-  // 피사체 실루엣 — 실제 영상처럼 보이도록 어두운 블록
-  const sy = h * 0.62;
-  ctx.fillStyle = withAlpha('#000000', 0.55);
-  roundRect(ctx, w * 0.28, sy, w * 0.44, h * 0.2, unit * 0.02);
+  // 피사체 — 초점이 약간 나간 실루엣처럼 보이도록 블러 처리
+  ctx.save();
+  ctx.filter = `blur(${Math.max(2, unit * 0.006)}px)`;
+  const sy = h * 0.6;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  roundRect(ctx, w * 0.3, sy, w * 0.4, h * 0.19, unit * 0.018);
   ctx.fill();
-  ctx.fillStyle = withAlpha('#ffffff', 0.12);
-  roundRect(ctx, w * 0.31, sy + h * 0.02, w * 0.16, h * 0.05, unit * 0.01);
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.beginPath();
+  ctx.arc(w * 0.36, sy + h * 0.02, unit * 0.085, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.09)';
+  roundRect(ctx, w * 0.33, sy + h * 0.02, w * 0.13, h * 0.045, unit * 0.01);
+  ctx.fill();
+  ctx.restore();
+
+  // 빛줄기
+  ctx.save();
+  const beam = ctx.createLinearGradient(0, 0, w * 0.8, h);
+  beam.addColorStop(0, withAlpha(scene.accent, 0.22));
+  beam.addColorStop(0.5, withAlpha(scene.accent, 0.02));
+  beam.addColorStop(1, withAlpha(scene.accent, 0));
+  ctx.fillStyle = beam;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.05, 0);
+  ctx.lineTo(w * 0.55, 0);
+  ctx.lineTo(w * 0.95, h);
+  ctx.lineTo(w * 0.45, h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // 부유 입자 (결정적)
+  ctx.save();
+  for (let i = 0; i < 22; i++) {
+    const px = ((i * 0.618 + time * (0.01 + (i % 5) * 0.004)) % 1) * w;
+    const py = ((i * 0.377 + time * 0.008) % 1) * h;
+    ctx.fillStyle = withAlpha('#ffffff', 0.05 + (i % 4) * 0.02);
+    ctx.beginPath();
+    ctx.arc(px, py, unit * (0.0015 + (i % 3) * 0.0012), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 
   // 비네트
   const v = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.2, w / 2, h / 2, Math.max(w, h) * 0.75);
@@ -192,14 +227,22 @@ function drawSubtitle(ctx: CanvasRenderingContext2D, w: number, h: number, proje
   const text = subtitleText(clip, project.lang);
   if (!text) return;
   const preset = SUBTITLE_PRESETS[project.subtitlePreset];
-  const size = Math.min(w, h) * preset.fontPx;
+  const maxWidth = w * 0.84;
+  const baseSize = Math.min(w, h) * preset.fontPx;
+  let size = baseSize;
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `${preset.weight} ${size}px ${FONT_STACK[project.lang]}`;
-  const maxWidth = w * 0.84;
-  const lines = wrapText(ctx, text, maxWidth, preset.maxLines);
-  const lineHeight = size * 1.22;
+  let lines = wrapText(ctx, text, maxWidth, preset.maxLines);
+  // 한 줄로 다 들어가지 않으면 글자를 줄여 가며 맞춘다(말줄임 대신 가독성 우선)
+  let guard = 0;
+  while (lines.length && lines[lines.length - 1].endsWith('…') && size > baseSize * 0.62 && guard++ < 10) {
+    size *= 0.93;
+    ctx.font = `${preset.weight} ${size}px ${FONT_STACK[project.lang]}`;
+    lines = wrapText(ctx, text, maxWidth, preset.maxLines);
+  }
+  const lineHeight = size * 1.2;
   const blockH = lines.length * lineHeight;
   const isShorts = project.subtitlePreset === 'shorts';
   const centerY = h * preset.y;

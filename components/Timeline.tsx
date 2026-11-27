@@ -5,6 +5,7 @@ import { formatTimecode } from '@/lib/renderer';
 import { useEditor, type TimeStore } from '@/lib/editor-context';
 import { clipEnd, duckingFor, moveClip, projectDuration, removeClip, splitAt, trimClip } from '@/lib/editor-ops';
 import { LANG_SHORT, TRACKS, TRACK_COLOR, type Clip, type TrackId } from '@/lib/types';
+import { SFX_CATEGORIES, SFX_EMOTIONS, TONES, BGM_PRESETS } from '@/lib/data';
 
 const ROW_H = 44;
 const ROW_H_COMPACT = 38;
@@ -269,15 +270,16 @@ export function Timeline({ compact = false }: { compact?: boolean }) {
                                 {clip.track === 'subtitle' && clip.text ? <span className="truncate">{clip.text}</span> : null}
                                 {clip.track === 'voice' && clip.voice ? (
                                   <span className="truncate">
-                                    {clip.voice.tone} · {clip.voice.rate.toFixed(2)}x
+                                    {TONES.find((t) => t.id === clip.voice?.tone)?.name} · {clip.voice.rate.toFixed(2)}x
                                   </span>
                                 ) : null}
                                 {clip.track === 'sfx' && clip.sfx ? (
                                   <span className="truncate">
-                                    {clip.sfx.emotion} v{clip.sfx.variation + 1}
+                                    {SFX_CATEGORIES.find((c) => c.id === clip.sfx?.category)?.name} ·{' '}
+                                    {SFX_EMOTIONS.find((e) => e.id === clip.sfx?.emotion)?.name} v{clip.sfx.variation + 1}
                                   </span>
                                 ) : null}
-                                {clip.track === 'bgm' ? <span>{clip.bgmPreset}</span> : null}
+                                {clip.track === 'bgm' ? <span>{BGM_PRESETS.find((b) => b.id === clip.bgmPreset)?.name}</span> : null}
                               </div>
                             )}
                           </div>

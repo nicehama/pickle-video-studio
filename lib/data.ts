@@ -156,9 +156,9 @@ export const SUBTITLE_PRESETS: Record<SubtitlePreset, {
 }> = {
   shorts: {
     name: '숏폼 강조',
-    desc: 'Pretendard ExtraBold · 노랑 강조 · 1줄',
+    desc: 'Pretendard ExtraBold · 노랑 강조 · 1~2줄',
     maxChars: 14,
-    maxLines: 1,
+    maxLines: 2,
     fontPx: 0.072,
     weight: 800,
     color: '#ffe14d',

@@ -93,6 +93,7 @@ export function Preview() {
           />
           <button
             type="button"
+            hidden={aspect !== '9:16'}
             onClick={(e) => {
               e.stopPropagation();
               ed.commit((p) => ({ ...p, safeZone: !p.safeZone }));
