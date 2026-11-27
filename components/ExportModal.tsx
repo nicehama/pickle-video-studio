@@ -1,7 +1,9 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { audioEngine, sfxParamFor } from '@/lib/audio-engine';
+import { audioEngine } from '@/lib/audio-engine';
+import { getSfxAudio } from '@/lib/sfx-audio';
+import { getVoiceAudio } from '@/lib/voice-audio';
 import { useEditor } from '@/lib/editor-context';
 import { projectDuration } from '@/lib/editor-ops';
 import { drawFrame } from '@/lib/renderer';
@@ -34,6 +36,29 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     cancelRef.current = false;
     setNote('');
     setProgress(0);
+    // 클릭 핸들러 안에서 동기 unlock — 내보내기 동안 오디오가 실제로 흘러야 한다
+    audioEngine.syncUnlock();
+
+    // 1) 성우·효과음 오디오를 미리 준비한다 (없던 클립만 생성, 있으면 캐시 재사용)
+    const voiceClips = ed.project.clips.filter((c) => c.track === 'voice' && c.voice && c.start < range);
+    const sfxClips = ed.project.clips.filter((c) => c.track === 'sfx' && c.sfx && c.start < range);
+    const voiceBufs = new Map<string, AudioBuffer>();
+    const sfxBufs = new Map<string, AudioBuffer>();
+    if (voiceClips.length || sfxClips.length) {
+      setNote(`성우·효과음 오디오 준비 중… (${voiceClips.length + sfxClips.length}개)`);
+    }
+    for (const c of voiceClips) {
+      if (!c.voice) continue;
+      const res = await getVoiceAudio(c.voice);
+      if (res) voiceBufs.set(c.id, res.buffer);
+    }
+    for (const c of sfxClips) {
+      if (!c.sfx) continue;
+      const res = await getSfxAudio(c.sfx);
+      sfxBufs.set(c.id, res.buffer);
+    }
+    setNote('');
+
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -54,25 +79,31 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     });
     recorder.start(250);
 
-    // 오디오: 효과음·BGM을 실제 시간에 맞춰 넣는다 (브라우저 음성 TTS는 캡처 불가)
-    audioEngine.ensure();
+    // 2) 오디오: 성우(ElevenLabs 오디오 버퍼)·효과음·BGM을 실제 시간에 맞춰 넣는다
+    const actx = audioEngine.ensure();
+    const audioStart = (actx?.currentTime ?? 0) + 0.2;
     if (ed.project.music) {
       const bgm = ed.project.clips.find((c) => c.track === 'bgm');
       if (bgm?.bgmPreset) audioEngine.startBgm(bgm.bgmPreset);
     }
-    ed.project.clips
-      .filter((c) => c.track === 'sfx' && c.sfx && c.start < range)
-      .forEach((c) => {
-        const { param, key } = sfxParamFor(c.sfx!.category, c.sfx!.emotion, c.sfx!.intensity, c.sfx!.variation);
-        void audioEngine.playSfx(param, key, c.start);
-      });
+    voiceClips.forEach((c) => {
+      const buffer = voiceBufs.get(c.id);
+      if (!buffer || !c.voice) return;
+      audioEngine.playBuffer(buffer, { atWhen: audioStart + c.start, volume: c.voice.volume, kind: 'voice' });
+    });
+    sfxClips.forEach((c) => {
+      const buffer = sfxBufs.get(c.id);
+      if (!buffer) return;
+      audioEngine.playBuffer(buffer, { atWhen: audioStart + c.start, kind: 'sfx' });
+    });
 
     const stills = new Map<string, HTMLVideoElement>();
     ed.videos.current.forEach((v, id) => stills.set(id, v));
-    const started = performance.now();
+    // 화면 시계를 오디오 시작 시각에 맞춘다 (영상과 소리가 어긋나지 않게)
+    const started = performance.now() + 200;
     await new Promise<void>((resolve) => {
       const step = () => {
-        const elapsed = (performance.now() - started) / 1000;
+        const elapsed = Math.max(0, (performance.now() - started) / 1000);
         const t = Math.min(range, elapsed);
         drawFrame(ctx, w, h, {
           project: burnIn ? ed.project : { ...ed.project, clips: ed.project.clips.filter((c) => c.track !== 'subtitle') },
@@ -81,7 +112,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           showSafeZone: false,
           showBadges: false,
         });
-        setProgress(Math.min(1, elapsed / range));
+        setProgress(Math.min(1, Math.max(0, elapsed) / range));
         if (cancelRef.current || elapsed >= range) {
           resolve();
           return;
@@ -93,10 +124,15 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     recorder.stop();
     audioEngine.stopBgm();
     audioEngine.stopSfx();
+    audioEngine.stopVoice();
     const blob = await finished;
     downloadBlob(`${slug(ed.project.title)}_${aspect.replace(':', 'x')}_${res}.webm`, blob);
     setProgress(null);
-    setNote(`내보내기 완료 · ${(blob.size / 1024 / 1024).toFixed(1)}MB · 브라우저 음성(TTS)은 파일에 포함되지 않습니다`);
+    const browserOnly = voiceClips.filter((c) => !voiceBufs.has(c.id)).length;
+    setNote(
+      `내보내기 완료 · ${(blob.size / 1024 / 1024).toFixed(1)}MB · 성우 ${voiceBufs.size}개·효과음 ${sfxBufs.size}개 포함` +
+        (browserOnly ? ` · ${browserOnly}개 성우는 브라우저 음성이라 파일에 담기지 않았습니다` : ''),
+    );
     ed.toast('WebM 파일을 내려받았습니다');
   };
 

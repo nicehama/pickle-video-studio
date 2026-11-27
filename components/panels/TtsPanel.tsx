@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { audioEngine } from '@/lib/audio-engine';
 import { useEditor } from '@/lib/editor-context';
 import { TONES, VOICE_LANG, toneById, uid } from '@/lib/data';
-import { LANG_LABEL, type Lang, type Tone } from '@/lib/types';
+import { LANG_LABEL, type Lang, type Tone, type VoiceSpec } from '@/lib/types';
 import { estimateDuration, listVoices, pickVoice, speak, type SpeakHandle } from '@/lib/tts';
+import { getVoiceAudio, lastVoiceError, peekVoiceBuffer, voiceCacheKey } from '@/lib/voice-audio';
 import { Pill, SectionTitle, Segmented, Slider } from '../ui';
 
 const SAMPLE = '실외기에서 나는 소리, 3분이면 원인을 찾을 수 있습니다.<0.6s> 팬 밸런스부터 확인하세요.';
@@ -20,9 +22,11 @@ export function TtsPanel() {
   const [volume, setVolume] = useState(1);
   const [voiceURI, setVoiceURI] = useState<string>('');
   const [playing, setPlaying] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const handleRef = useRef<SpeakHandle | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   const voices = useMemo(() => listVoices(lang), [lang, ed.voicesReady]);
 
@@ -43,33 +47,54 @@ export function TtsPanel() {
   const stop = () => {
     handleRef.current?.cancel();
     handleRef.current = null;
-    audioRef.current?.pause();
+    audioEngine.stopVoice();
+    audioEngine.stopElement();
+    if (timerRef.current) window.clearTimeout(timerRef.current);
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
     setPlaying(false);
   };
 
+  const spec = (): VoiceSpec => ({ text, lang, tone, rate, pitch, volume, voiceURI: voiceURI || undefined });
+
+  /** 재생이 실제로 소리를 내는지 확인 — iOS 무음 스위치·잠금 상태면 안내하고 <audio>로 재시도 */
+  const watchAudible = (blob?: Blob) => {
+    window.setTimeout(() => {
+      const st = audioEngine.state;
+      if (st !== 'suspended' && st !== 'interrupted') return;
+      if (blob) {
+        void audioEngine.playBlobElement(blob, volume).then((ok) => {
+          if (!ok) ed.toast('소리가 안 들리면 아이폰 측면 무음 스위치를 끄고 볼륨을 올려 주세요', 'warn');
+        });
+      } else {
+        ed.toast('소리가 안 들리면 아이폰 측면 무음 스위치를 끄고 볼륨을 올려 주세요', 'warn');
+      }
+    }, 450);
+  };
+
   const preview = async () => {
+    // 클릭 직후 동기적으로 오디오 잠금을 푼다 (iOS Safari·인앱 브라우저 필수)
+    audioEngine.syncUnlock();
     stop();
     setPlaying(true);
+    setNote('');
+    const s = spec();
     if (ed.caps.tts !== 'browser') {
-      try {
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, lang, tone, rate, pitch, voiceId: undefined }),
-        });
-        const type = res.headers.get('content-type') ?? '';
-        if (type.includes('audio')) {
-          const blob = await res.blob();
-          const audio = new Audio(URL.createObjectURL(blob));
-          audioRef.current = audio;
-          audio.onended = () => setPlaying(false);
-          await audio.play();
-          return;
-        }
-      } catch {
-        /* 폴백 */
+      setBusy(true);
+      setNote('ElevenLabs 음성 만드는 중…');
+      const res = await getVoiceAudio(s);
+      setBusy(false);
+      if (res) {
+        setNote(
+          `${res.provider === 'elevenlabs' ? 'ElevenLabs' : 'OpenAI'} 음성 · ${res.buffer.duration.toFixed(1)}초${res.fromCache ? ' · 캐시 재사용' : ''}`,
+        );
+        audioEngine.playBuffer(res.buffer, { volume, kind: 'voice' });
+        watchAudible(res.blob);
+        timerRef.current = window.setTimeout(() => setPlaying(false), Math.max(400, res.buffer.duration * 1000));
+        return;
       }
+      const why = lastVoiceError();
+      setNote(`ElevenLabs 음성을 못 받아 브라우저 음성으로 재생합니다${why ? ` · ${why}` : ''}`);
+      ed.toast('ElevenLabs 음성을 못 받아 브라우저 음성으로 재생합니다', 'warn');
     }
     handleRef.current = speak(text, { lang, rate, pitch, volume, voiceURI: voiceURI || undefined });
     void handleRef.current.done.then(() => setPlaying(false));
@@ -100,31 +125,68 @@ export function TtsPanel() {
     });
   };
 
-  const addToTimeline = () => {
+  /** 타임라인에 넣기 전에 실제 오디오를 만들어 길이를 맞춘다 (같은 문장은 캐시 재사용) */
+  const prepareVoice = async (): Promise<{ spec: VoiceSpec; duration: number; provider: string }> => {
+    const s = spec();
+    let duration = Math.max(0.8, Math.round(dur * 10) / 10);
+    let provider = 'browser';
+    if (ed.caps.tts !== 'browser') {
+      setBusy(true);
+      setNote(
+        peekVoiceBuffer(s) ? '저장된 ElevenLabs 음성을 쓰는 중…' : 'ElevenLabs 음성을 만드는 중… (몇 초 걸립니다)',
+      );
+      const res = await getVoiceAudio(s);
+      setBusy(false);
+      if (res) {
+        duration = Math.max(0.3, Math.round(res.buffer.duration * 100) / 100);
+        provider = res.provider;
+        setNote(`${provider === 'elevenlabs' ? 'ElevenLabs' : 'OpenAI'} 음성 준비 완료 · ${duration.toFixed(1)}초`);
+      } else {
+        const why = lastVoiceError();
+        setNote(`ElevenLabs 음성을 못 받아 브라우저 음성으로 넣습니다${why ? ` · ${why}` : ''}`);
+        ed.toast('ElevenLabs 음성을 못 받아 브라우저 음성으로 넣습니다', 'warn');
+      }
+    }
+    return { spec: { ...s, provider, audioKey: voiceCacheKey(s) }, duration, provider };
+  };
+
+  const addToTimeline = async () => {
     if (!text.trim()) {
       ed.toast('대사나 나레이션을 입력하세요', 'warn');
       return;
     }
+    audioEngine.syncUnlock();
+    const ready = await prepareVoice();
     const clip = {
       id: uid('t'),
       track: 'voice' as const,
       start: Math.round(ed.time.t * 20) / 20,
-      duration: Math.max(0.8, Math.round(dur * 10) / 10),
-      label: `성우 · ${toneById(tone).name}`,
-      voice: { text, lang, tone, rate, pitch, volume, voiceURI: voiceURI || undefined },
+      duration: ready.duration,
+      label: `성우 · ${toneById(tone).name}${ready.provider === 'browser' ? ' · 브라우저' : ''}`,
+      voice: ready.spec,
     };
     ed.commit((p) => ({ ...p, clips: [...p.clips, clip] }));
     ed.select(clip.id);
-    ed.toast(`성우 클립 ${dur.toFixed(1)}초를 추가했습니다`);
+    ed.toast(
+      `${ready.provider === 'elevenlabs' ? 'ElevenLabs' : ready.provider === 'openai' ? 'OpenAI' : '브라우저'} 성우 ${ready.duration.toFixed(1)}초를 추가했습니다`,
+      ready.provider === 'browser' ? 'warn' : 'ok',
+    );
   };
 
-  const updateSelected = () => {
+  const updateSelected = async () => {
     if (!selected) return;
+    audioEngine.syncUnlock();
+    const ready = await prepareVoice();
     ed.commit((p) => ({
       ...p,
       clips: p.clips.map((c) =>
         c.id === selected.id
-          ? { ...c, label: `성우 · ${toneById(tone).name}`, duration: Math.max(0.6, Math.round(dur * 10) / 10), voice: { text, lang, tone, rate, pitch, volume, voiceURI: voiceURI || undefined } }
+          ? {
+              ...c,
+              label: `성우 · ${toneById(tone).name}${ready.provider === 'browser' ? ' · 브라우저' : ''}`,
+              duration: ready.duration,
+              voice: ready.spec,
+            }
           : c,
       ),
     }));
@@ -132,7 +194,9 @@ export function TtsPanel() {
   };
 
   const providerLabel =
-    ed.caps.tts === 'browser'
+    ed.caps.tts === ''
+      ? '음성 엔진 확인 중…'
+      : ed.caps.tts === 'browser'
       ? '브라우저 음성 · API 키 연결 시 자동 전환'
       : ed.caps.tts === 'elevenlabs'
         ? 'ElevenLabs 음성 연결됨'
@@ -151,6 +215,8 @@ export function TtsPanel() {
       <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-2.5 py-2 text-[10.5px] leading-snug text-slate-400">
         <span className="mr-1">{ed.caps.tts === 'browser' ? '🔈' : '🎧'}</span>
         {providerLabel}
+        <div className="mt-0.5 text-[10px] text-slate-500">같은 문장은 다시 만들지 않고 저장된 음성을 재사용합니다.</div>
+        {note && <div className="mt-1 text-[10px] text-lime-200/90">{note}</div>}
       </div>
 
       <div>
@@ -232,11 +298,21 @@ export function TtsPanel() {
       </div>
 
       <div className="flex gap-1.5">
-        <button type="button" onClick={playing ? stop : () => void preview()} className={`btn flex-1 ${playing ? '' : 'btn-primary'}`}>
-          {playing ? '■ 중지' : '▶ 미리듣기'}
+        <button
+          type="button"
+          onClick={playing ? stop : () => void preview()}
+          disabled={busy}
+          className={`btn flex-1 ${playing ? '' : 'btn-primary'} disabled:opacity-60`}
+        >
+          {busy ? '⏳ 생성 중…' : playing ? '■ 중지' : '▶ 미리듣기'}
         </button>
-        <button type="button" onClick={selected ? updateSelected : addToTimeline} className="btn flex-1">
-          {selected ? '선택 클립 업데이트' : '+ 타임라인'}
+        <button
+          type="button"
+          onClick={() => void (selected ? updateSelected() : addToTimeline())}
+          disabled={busy}
+          className="btn flex-1 disabled:opacity-60"
+        >
+          {busy ? '⏳ 생성 중…' : selected ? '선택 클립 업데이트' : '+ 타임라인'}
         </button>
       </div>
 

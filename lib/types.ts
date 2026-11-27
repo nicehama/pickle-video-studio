@@ -35,7 +35,12 @@ export interface VoiceSpec {
   rate: number;
   pitch: number;
   volume: number;
+  /** 브라우저 음성(Web Speech)일 때만 쓰는 음성 URI */
   voiceURI?: string;
+  /** 실제로 생성된 음성 엔진 — elevenlabs | openai | browser */
+  provider?: string;
+  /** 생성된 오디오 캐시 키 (voice-audio.ts) */
+  audioKey?: string;
 }
 
 export interface SfxSpec {
@@ -44,6 +49,10 @@ export interface SfxSpec {
   emotion: string;
   intensity: string;
   variation: number;
+  /** 실제로 생성된 효과음 엔진 — elevenlabs | synth */
+  provider?: string;
+  /** 생성된 오디오 캐시 키 (sfx-audio.ts) */
+  audioKey?: string;
 }
 
 export interface Clip {

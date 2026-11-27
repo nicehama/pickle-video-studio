@@ -1,12 +1,14 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { audioEngine, sfxParamFor } from './audio-engine';
+import { audioEngine } from './audio-engine';
 import { createEmptyProject, createSampleProject, uid } from './data';
 import { clipEnd, projectDuration, setFraming } from './editor-ops';
 import { clearAll, loadAssets, loadSaved, saveAsset, saveProject } from './persist';
 import type { Clip, Framing, MediaAsset, Project, TrackId } from './types';
 import { speak, type SpeakHandle } from './tts';
+import { getVoiceAudio, lastVoiceError, peekVoiceBuffer, preloadVoice } from './voice-audio';
+import { getSfxAudio, lastSfxError, peekSfxBuffer, preloadSfx } from './sfx-audio';
 
 /* --------------------------------------------------------------- */
 /* 재생 시간 스토어 — 60fps 갱신을 컨텍스트 밖으로 분리한다          */
@@ -103,7 +105,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [zoom, setZoom] = useState(64);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [caps, setCaps] = useState({ tts: 'browser', sfx: 'synth', translate: 'demo' });
+  const [caps, setCaps] = useState({ tts: '', sfx: '', translate: '' });
   const [voicesReady, setVoicesReady] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>('loading');
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -117,6 +119,10 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const spokenRef = useRef<Set<string>>(new Set());
   const sfxRef = useRef<Set<string>>(new Set());
   const speakHandle = useRef<SpeakHandle | null>(null);
+  const warnedVoice = useRef(false);
+  const warnedSfx = useRef(false);
+  const capsRef = useRef({ tts: '', sfx: '' });
+  capsRef.current = { tts: caps.tts, sfx: caps.sfx };
 
   const projectRef = useRef(project);
   projectRef.current = project;
@@ -215,8 +221,79 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const stopSpeaking = useCallback(() => {
     speakHandle.current?.cancel();
     speakHandle.current = null;
+    audioEngine.stopVoice();
+    audioEngine.stopElement();
     audioEngine.setDucking(false);
   }, []);
+
+  /** 브라우저 내장 음성은 마지막 수단으로만 쓴다 */
+  const speakFallback = useCallback((clip: Clip) => {
+    const spec = clip.voice;
+    if (!spec) return;
+    speakHandle.current = speak(spec.text, {
+      lang: spec.lang,
+      rate: spec.rate,
+      pitch: spec.pitch,
+      volume: spec.volume,
+      voiceURI: spec.voiceURI,
+    });
+    audioEngine.setDucking(true);
+  }, []);
+
+  /** 성우 클립 재생 — 캐시된 ElevenLabs 오디오 우선, 없으면 받아서, 그래도 안 되면 브라우저 음성 */
+  const playVoiceClip = useCallback(
+    (clip: Clip) => {
+      const spec = clip.voice;
+      if (!spec) return;
+      const buffer = peekVoiceBuffer(spec);
+      if (buffer) {
+        audioEngine.playBuffer(buffer, { volume: spec.volume, kind: 'voice' });
+        audioEngine.setDucking(true);
+        return;
+      }
+      if (capsRef.current.tts === 'browser') {
+        speakFallback(clip);
+        return;
+      }
+      void getVoiceAudio(spec).then((res) => {
+        if (!res) {
+          speakFallback(clip);
+          if (!warnedVoice.current) {
+            warnedVoice.current = true;
+            const why = lastVoiceError();
+            toast(`성우 음성을 받지 못해 브라우저 음성으로 재생합니다${why ? ` (${why})` : ''}`, 'warn');
+          }
+          return;
+        }
+        if (!time.playing) return;
+        if (time.t < clip.start || time.t > clipEnd(clip) - 0.12) return;
+        audioEngine.playBuffer(res.buffer, { volume: spec.volume, offset: Math.max(0, time.t - clip.start), kind: 'voice' });
+        audioEngine.setDucking(true);
+      });
+    },
+    [speakFallback, time, toast],
+  );
+
+  const playSfxClip = useCallback(
+    (clip: Clip) => {
+      const spec = clip.sfx;
+      if (!spec) return;
+      const cached = peekSfxBuffer(spec);
+      if (cached) {
+        audioEngine.playBuffer(cached, { kind: 'sfx' });
+        return;
+      }
+      void getSfxAudio(spec).then((res) => {
+        if (time.playing) audioEngine.playBuffer(res.buffer, { kind: 'sfx' });
+        if (res.provider === 'synth' && !warnedSfx.current) {
+          warnedSfx.current = true;
+          const why = lastSfxError();
+          toast(`ElevenLabs 효과음을 못 받아 합성음으로 재생합니다${why ? ` (${why})` : ''}`, 'warn');
+        }
+      });
+    },
+    [time, toast],
+  );
 
   const pause = useCallback(() => {
     time.setPlaying(false);
@@ -228,31 +305,26 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     videos.current.forEach((v) => v.pause());
   }, [time, stopSpeaking]);
 
-  const triggerAt = useCallback((t: number, prevT: number) => {
-    const p = projectRef.current;
-    const crossed = (start: number) => start > prevT - 0.0001 && start <= t + 0.0001;
-    for (const c of p.clips) {
-      if (c.track === 'voice' && crossed(c.start) && !spokenRef.current.has(c.id) && c.voice) {
-        spokenRef.current.add(c.id);
-        speakHandle.current = speak(c.voice.text, {
-          lang: c.voice.lang,
-          rate: c.voice.rate,
-          pitch: c.voice.pitch,
-          volume: c.voice.volume,
-          voiceURI: c.voice.voiceURI,
-        });
-        audioEngine.setDucking(true);
+  const triggerAt = useCallback(
+    (t: number, prevT: number) => {
+      const p = projectRef.current;
+      const crossed = (start: number) => start > prevT - 0.0001 && start <= t + 0.0001;
+      for (const c of p.clips) {
+        if (c.track === 'voice' && crossed(c.start) && !spokenRef.current.has(c.id) && c.voice) {
+          spokenRef.current.add(c.id);
+          playVoiceClip(c);
+        }
+        if (c.track === 'sfx' && crossed(c.start) && !sfxRef.current.has(c.id) && c.sfx) {
+          sfxRef.current.add(c.id);
+          playSfxClip(c);
+        }
+        if (c.track === 'bgm' && crossed(c.start) && p.music && c.bgmPreset) {
+          audioEngine.startBgm(c.bgmPreset);
+        }
       }
-      if (c.track === 'sfx' && crossed(c.start) && !sfxRef.current.has(c.id) && c.sfx) {
-        sfxRef.current.add(c.id);
-        const { param, key } = sfxParamFor(c.sfx.category, c.sfx.emotion, c.sfx.intensity, c.sfx.variation);
-        void audioEngine.playSfx(param, key);
-      }
-      if (c.track === 'bgm' && crossed(c.start) && p.music && c.bgmPreset) {
-        audioEngine.startBgm(c.bgmPreset);
-      }
-    }
-  }, []);
+    },
+    [playSfxClip, playVoiceClip],
+  );
 
   const tick = useCallback(
     (ts: number) => {
@@ -282,6 +354,14 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       pause();
       return;
     }
+    // iOS: 클릭 핸들러 안에서 동기적으로 오디오 잠금을 푼다 (fetch 뒤에는 늦다)
+    audioEngine.syncUnlock();
+    window.setTimeout(() => {
+      const st = audioEngine.state;
+      if (st !== 'running' && st !== 'none') {
+        toast('소리가 안 들리면 아이폰 측면 무음 스위치를 끄고 볼륨을 올려 보세요', 'warn');
+      }
+    }, 600);
     const total = projectDuration(projectRef.current);
     if (time.t >= total - 0.05) time.set(0);
     spokenRef.current = new Set();
@@ -294,10 +374,10 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       const bgm = p.clips.find((c) => c.track === 'bgm' && time.t >= c.start && time.t < clipEnd(c));
       if (bgm?.bgmPreset) audioEngine.startBgm(bgm.bgmPreset);
     }
-    // 시작 지점에 걸친 효과음은 즉시 울린다
+    // 시작 지점에 걸친 효과음·성우는 즉시 울린다
     triggerAt(time.t + 0.05, time.t - 0.05);
     rafRef.current = requestAnimationFrame(tick);
-  }, [pause, tick, time, triggerAt]);
+  }, [pause, tick, time, toast, triggerAt]);
 
   const stop = useCallback(() => {
     pause();
@@ -403,6 +483,11 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
           setFuture([]);
           setSavedAt(saved.savedAt || Date.now());
           setSaveState('saved');
+          // 전에 생성해 둔 성우·효과음 오디오를 메모리에 올려 재생을 바로 되게 한다
+          p.clips.forEach((c) => {
+            if (c.track === 'voice' && c.voice) void preloadVoice(c.voice);
+            if (c.track === 'sfx' && c.sfx) void preloadSfx(c.sfx);
+          });
           const stored = await loadAssets();
           if (alive && stored.length) {
             const restored: MediaAsset[] = [];

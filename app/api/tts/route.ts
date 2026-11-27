@@ -42,7 +42,12 @@ async function elevenVoices(key: string): Promise<ElevenVoice[]> {
   }
 }
 
-const FALLBACK_VOICES = ['21m00Tcm4TlvDq8ikWAM', 'EXAVITQu4vr4xnSDxMaL', 'pNInz6obpgDQGcFmaJgB', 'iP95p4xoKVk53GoZ742B'];
+/**
+ * 기본 음성 — 이 계정(무료 플랜)에서 실제로 동작하고 나레이션에 맞는 음성.
+ * (기존 기본값 21m00Tcm4TlvDq8ikWAM 'Rachel'은 라이브러리 음성이라 무료 플랜 API에서 402가 났다)
+ */
+const DEFAULT_VOICE = 'onwK4e9ZLuTAKqWW03F9';
+const FALLBACK_VOICES = [DEFAULT_VOICE, 'pNInz6obpgDQGcFmaJgB', 'EXAVITQu4vr4xnSDxMaL', 'JBFqnCBsd6RMkjVDRZzb', 'hpp4J3VqNfWAUOO0d1Us'];
 const MODEL_CHAIN = ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'];
 
 const TONE_SETTINGS: Record<string, { stability: number; similarity_boost: number; style: number }> = {
@@ -104,8 +109,9 @@ async function synthesizeEleven(key: string, req: { text: string; lang: string; 
     if (id && !ordered.includes(id)) ordered.push(id);
   };
   push(req.voiceId);
-  push(lastGoodVoice ?? undefined);
   push(process.env.ELEVENLABS_VOICE_ID);
+  push(lastGoodVoice ?? undefined);
+  push(DEFAULT_VOICE);
   koreanish.forEach((v) => push(v.id));
   premade.forEach((v) => push(v.id));
   voices.forEach((v) => push(v.id));
