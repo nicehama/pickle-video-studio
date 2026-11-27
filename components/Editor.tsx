@@ -35,10 +35,10 @@ function ToolContent({ tab }: { tab: ToolTab }) {
 function SaveBadge() {
   const ed = useEditor();
   const map = {
-    loading: { text: '불러오는 중…', dot: 'bg-slate-500' },
-    saving: { text: '저장 중…', dot: 'bg-amber-300 animate-pulse' },
-    saved: { text: ed.savedAt ? `저장됨 ${formatSavedAt(ed.savedAt)}` : '저장됨', dot: 'bg-lime-300' },
-    error: { text: '저장 실패', dot: 'bg-rose-400' },
+    loading: { text: '불러오는 중…', short: '불러오는 중', dot: 'bg-slate-500' },
+    saving: { text: '저장 중…', short: '저장 중', dot: 'bg-amber-300 animate-pulse' },
+    saved: { text: ed.savedAt ? `저장됨 ${formatSavedAt(ed.savedAt)}` : '저장됨', short: '저장됨', dot: 'bg-lime-300' },
+    error: { text: '저장 실패', short: '저장 실패', dot: 'bg-rose-400' },
   } as const;
   const s = map[ed.saveState];
   return (
@@ -48,8 +48,9 @@ function SaveBadge() {
       title="새로고침해도 이어서 편집됩니다 · 눌러서 지금 저장"
       className="mr-0.5 flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2 text-[10.5px] font-medium text-slate-400 transition hover:text-slate-200"
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      <span className="hidden sm:inline">{s.text}</span>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.dot}`} />
+      <span className="whitespace-nowrap sm:hidden">{s.short}</span>
+      <span className="hidden whitespace-nowrap sm:inline">{s.text}</span>
     </button>
   );
 }
