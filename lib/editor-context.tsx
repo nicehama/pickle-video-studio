@@ -279,11 +279,13 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       const spec = clip.sfx;
       if (!spec) return;
       const cached = peekSfxBuffer(spec);
+      audioEngine.note('sfx-resolve', cached ? 'cache-hit' : 'fetch');
       if (cached) {
         audioEngine.playBuffer(cached, { kind: 'sfx' });
         return;
       }
       void getSfxAudio(spec).then((res) => {
+        audioEngine.note('sfx-fetched', `${res.provider} playing=${time.playing}`);
         if (time.playing) audioEngine.playBuffer(res.buffer, { kind: 'sfx' });
         if (res.provider === 'synth' && !warnedSfx.current) {
           warnedSfx.current = true;
@@ -316,6 +318,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         }
         if (c.track === 'sfx' && crossed(c.start) && !sfxRef.current.has(c.id) && c.sfx) {
           sfxRef.current.add(c.id);
+          audioEngine.note('sfx-trigger', `${c.label} @${c.start}`);
           playSfxClip(c);
         }
         if (c.track === 'bgm' && crossed(c.start) && p.music && c.bgmPreset) {

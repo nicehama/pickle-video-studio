@@ -19,6 +19,14 @@ export class AudioEngine {
   private element: HTMLAudioElement | null = null;
   private unlocked = false;
   private silentUrl: string | null = null;
+  /** 재생 진단 로그 (최근 60개) */
+  debug: { at: number; kind: string; detail: string }[] = [];
+
+  note(kind: string, detail = '') {
+    const at = Math.round(((this.ctx ? this.ctx.currentTime : 0)) * 100) / 100;
+    this.debug.push({ at, kind, detail });
+    if (this.debug.length > 60) this.debug.shift();
+  }
 
   ensure(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -137,6 +145,7 @@ export class AudioEngine {
     } catch {
       return 0;
     }
+    this.note('play', `${kind} when=${Math.round(when * 100) / 100} dur=${Math.round(buffer.duration * 100) / 100} off=${Math.round(off * 100) / 100}`);
     const list = kind === 'voice' ? this.voiceSources : this.activeSfx;
     list.push(src);
     src.onended = () => {
