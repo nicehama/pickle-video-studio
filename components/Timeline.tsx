@@ -151,9 +151,13 @@ export function Timeline({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex min-h-0 flex-col border-t border-white/[0.07] bg-ink-900/50">
       <div className="flex items-center gap-1.5 px-2.5 py-1.5">
-        <span className="mr-1 hidden text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 sm:inline">타임라인</span>
-        <Timecode />
-        <div className="mx-1 hidden h-4 w-px bg-white/10 sm:block" />
+        {!compact && (
+          <>
+            <span className="mr-1 hidden text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 sm:inline">타임라인</span>
+            <Timecode />
+            <div className="mx-1 hidden h-4 w-px bg-white/10 sm:block" />
+          </>
+        )}
         <button type="button" onClick={split} className="chip" title="재생 헤드에서 분할 (S)">
           ✂ 분할
         </button>

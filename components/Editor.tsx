@@ -242,7 +242,7 @@ export function Editor() {
                 <ToolContent tab={mobileTab} />
               </div>
             )}
-            <div className={`shrink-0 overflow-hidden transition-[height] ${timelineOpen ? 'h-[254px]' : 'h-0'}`}>
+            <div className={`shrink-0 overflow-hidden transition-[height] ${timelineOpen ? 'h-[268px]' : 'h-0'}`}>
               <Timeline compact />
             </div>
           </div>
