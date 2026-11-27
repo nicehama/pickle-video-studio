@@ -73,6 +73,11 @@ export function SubtitlePanel() {
     setBusy(true);
     try {
       const need = rows.filter((r) => !r.translations?.[target]);
+      if (!need.length) {
+        setBusy(false);
+        ed.toast(`모든 자막이 이미 ${LANG_LABEL[target]}로 번역되어 있습니다`, 'info');
+        return;
+      }
       const res = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

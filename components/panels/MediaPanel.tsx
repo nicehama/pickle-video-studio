@@ -150,7 +150,7 @@ export function MediaPanel() {
             className="btn text-[11.5px]"
             onClick={() => {
               ed.replaceProject(createSampleProject());
-              ed.toast('샘플 프로젝트(롱폼 20초)를 불러왔습니다');
+              ed.toast('샘플 프로젝트(20초 · 숏폼/롱폼 전환 가능)를 불러왔습니다');
             }}
           >
             샘플 불러오기
