@@ -285,6 +285,10 @@ export function TtsPanel() {
         <Slider label="강세 · 음량" value={volume} min={0} max={1} step={0.01} onChange={setVolume} format={(v) => `${Math.round(v * 100)}%`} />
       </div>
 
+      <p className="text-[10px] leading-snug text-slate-500">
+        속도는 AI 음성 생성에 반영되고, 피치는 브라우저 음성에서만 적용됩니다. 생성된 음성은 타임라인 재생과 내보내기에 그대로 들어갑니다.
+      </p>
+
       <div className="flex items-center justify-between rounded-xl border border-violet-400/20 bg-violet-500/[0.07] px-2.5 py-2">
         <div>
           <div className="text-[10.5px] text-slate-400">예상 길이</div>
