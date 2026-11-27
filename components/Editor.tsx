@@ -204,6 +204,7 @@ export function Editor() {
                     }
                     setMobileTab(t.id);
                     setSheetOpen(true);
+                    setTimelineOpen(false);
                   }}
                   className={`flex min-h-[40px] shrink-0 items-center gap-1 rounded-full border px-3.5 text-[12px] font-semibold transition ${
                     sheetOpen && mobileTab === t.id
@@ -217,7 +218,10 @@ export function Editor() {
               ))}
               <button
                 type="button"
-                onClick={() => setTimelineOpen((v) => !v)}
+                onClick={() => {
+                  setTimelineOpen((v) => !v);
+                  setSheetOpen(false);
+                }}
                 className={`ml-auto flex min-h-[40px] shrink-0 items-center rounded-full border px-3 text-[11.5px] ${
                   timelineOpen ? 'border-lime-400/40 bg-lime-400/15 text-lime-200' : 'border-white/10 text-slate-300'
                 }`}
@@ -238,7 +242,7 @@ export function Editor() {
                 <ToolContent tab={mobileTab} />
               </div>
             )}
-            <div className={`shrink-0 overflow-hidden transition-[height] ${timelineOpen ? 'h-[210px]' : 'h-0'}`}>
+            <div className={`shrink-0 overflow-hidden transition-[height] ${timelineOpen ? 'h-[254px]' : 'h-0'}`}>
               <Timeline compact />
             </div>
           </div>
