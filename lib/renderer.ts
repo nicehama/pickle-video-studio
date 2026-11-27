@@ -26,7 +26,14 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 export function activeClipAt(project: Project, track: Clip['track'], time: number): Clip | undefined {
-  return project.clips.find((c) => c.track === track && time >= c.start && time < c.start + c.duration);
+  // 같은 트랙에서 겹치면 나중에 시작한(위에 놓인) 클립이 이긴다
+  let best: Clip | undefined;
+  for (const c of project.clips) {
+    if (c.track !== track) continue;
+    if (time < c.start || time >= c.start + c.duration) continue;
+    if (!best || c.start > best.start) best = c;
+  }
+  return best;
 }
 
 function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, sceneKey: string | undefined, time: number) {
