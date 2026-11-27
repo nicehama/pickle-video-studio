@@ -336,6 +336,11 @@ function silentWavUrl(seconds: number): string {
 
 export const audioEngine = new AudioEngine();
 
+// 진단용 핸들 — 재생 중 AudioContext 상태를 확인할 때 쓴다
+if (typeof window !== 'undefined') {
+  (window as unknown as { __pickleAudio?: AudioEngine }).__pickleAudio = audioEngine;
+}
+
 export function sfxParamFor(category: string, emotion: string, intensity: string, variation: number) {
   return { param: buildSfxParam(category, emotion, intensity, variation), key: paramSignature(category, emotion, intensity, variation) };
 }
