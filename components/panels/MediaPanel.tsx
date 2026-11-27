@@ -1,8 +1,9 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { projectDuration } from '@/lib/editor-ops';
 import { useEditor } from '@/lib/editor-context';
-import { createEmptyProject, createSampleProject, SCENES, uid } from '@/lib/data';
+import { createEmptyProject, createSampleProject, SCENES, uid, BGM_PRESETS } from '@/lib/data';
 import { SectionTitle, Pill } from '../ui';
 
 export function MediaPanel() {
@@ -96,6 +97,39 @@ export function MediaPanel() {
               <span className="absolute right-1 top-1 text-[8px] font-bold text-white/0 transition group-hover:text-lime-300">+ 컷</span>
             </button>
           ))}
+        </div>
+      </div>
+
+      <div>
+        <SectionTitle right={<Pill tone="ok">자동 덕킹</Pill>}>배경 음악</SectionTitle>
+        <div className="grid grid-cols-2 gap-1.5">
+          {BGM_PRESETS.map((b) => {
+            const active = ed.project.clips.some((c) => c.track === 'bgm' && c.bgmPreset === b.id);
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => {
+                  const dur = Math.max(8, projectDuration(ed.project));
+                  ed.commit((p) => ({
+                    ...p,
+                    music: true,
+                    clips: [
+                      ...p.clips.filter((c) => c.track !== 'bgm'),
+                      { id: uid('m'), track: 'bgm', start: 0, duration: dur, label: b.name, bgmPreset: b.id },
+                    ],
+                  }));
+                  ed.toast(`${b.name} BGM을 깔았습니다`);
+                }}
+                className={`rounded-lg border px-2 py-1.5 text-left transition ${
+                  active ? 'border-lime-400/40 bg-lime-400/10' : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.06]'
+                }`}
+              >
+                <div className={`text-[11px] font-semibold ${active ? 'text-lime-200' : 'text-slate-200'}`}>{b.name}</div>
+                <div className="text-[9px] leading-tight text-slate-500">{b.desc}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
