@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 type Provider = 'elevenlabs' | 'openai' | 'browser';
 
@@ -24,6 +25,8 @@ interface ElevenVoice {
 }
 
 let voiceCache: { at: number; voices: ElevenVoice[] } | null = null;
+/** 한 번 성공한 음성은 기억해 두고 다음 요청부터 먼저 쓴다 */
+let lastGoodVoice: string | null = null;
 
 async function elevenVoices(key: string): Promise<ElevenVoice[]> {
   if (voiceCache && Date.now() - voiceCache.at < 5 * 60_000) return voiceCache.voices;
@@ -101,6 +104,7 @@ async function synthesizeEleven(key: string, req: { text: string; lang: string; 
     if (id && !ordered.includes(id)) ordered.push(id);
   };
   push(req.voiceId);
+  push(lastGoodVoice ?? undefined);
   push(process.env.ELEVENLABS_VOICE_ID);
   koreanish.forEach((v) => push(v.id));
   premade.forEach((v) => push(v.id));
@@ -133,6 +137,7 @@ async function synthesizeEleven(key: string, req: { text: string; lang: string; 
       }
     }
     if (res.ok) {
+      lastGoodVoice = a.voice;
       return { ok: true as const, audio: await res.arrayBuffer(), voice: a.voice, model: a.model };
     }
     const detail = await errorText(res);
@@ -164,9 +169,30 @@ export async function GET(req: Request) {
   const p = provider();
   const url = new URL(req.url);
 
+  // 진단용: 지정한 음성들을 짧은 텍스트로 한 번씩 두드려 상태를 돌려준다 (계정 확인용)
+  if (url.searchParams.get('probe')) {
+    if (!process.env.ELEVENLABS_API_KEY) return NextResponse.json({ ok: false, reason: 'no key' });
+    const key = process.env.ELEVENLABS_API_KEY;
+    const ids = (url.searchParams.get('voices') ?? 'pNInz6obpgDQGcFmaJgB,EXAVITQu4vr4xnSDxMaL,onwK4e9ZLuTAKqWW03F9')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const model = url.searchParams.get('model') ?? MODEL_CHAIN[0];
+    const results: { id: string; status: string; voice?: string }[] = [];
+    for (const id of ids.slice(0, 8)) {
+      const res = await elevenRequest(key, id, model, { text: '안녕', voice_settings: TONE_SETTINGS.calm });
+      if (res.ok) {
+        lastGoodVoice = id;
+        results.push({ id, status: 'ok', voice: id });
+      } else {
+        results.push({ id, status: `${res.status} ${(await errorText(res)).slice(0, 160)}` });
+      }
+    }
+    return NextResponse.json({ model, results, lastGoodVoice });
+  }
+
   // 진단용: 키·음성 목록·구독 상태를 값 없이 요약해 돌려준다 (키 자체는 절대 내보내지 않음)
-  if (url.searchParams.get('diag')) {
-    if (!process.env.ELEVENLABS_API_KEY) {
+  if (url.searchParams.get('diag')) {    if (!process.env.ELEVENLABS_API_KEY) {
       return NextResponse.json({ provider: p, elevenlabs: null, openai: !!process.env.OPENAI_API_KEY });
     }
     const key = process.env.ELEVENLABS_API_KEY;
