@@ -68,14 +68,36 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     const audioStream = audioEngine.exportStream(lufs);
     audioStream?.getAudioTracks().forEach((tr) => stream.addTrack(tr));
 
-    const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
-    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: res === '1080p' ? 6_000_000 : 4_000_000 });
+    // Safari(아이폰)는 WebM 녹화를 지원하지 않는다 → MP4로 대체
+    const mime = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4',
+    ].find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mime) {
+      setNote('');
+      setProgress(null);
+      ed.toast('이 브라우저는 동영상 녹화(MediaRecorder)를 지원하지 않습니다. PNG·SRT로 내보내 주세요', 'warn');
+      return;
+    }
+    const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: res === '1080p' ? 6_000_000 : 4_000_000 });
+    } catch {
+      setNote('');
+      setProgress(null);
+      ed.toast('녹화 시작에 실패했습니다. 480p로 다시 시도해 보세요', 'warn');
+      return;
+    }
     const chunks: BlobPart[] = [];
     recorder.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
     };
     const finished = new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }));
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mime }));
     });
     recorder.start(250);
 
@@ -126,7 +148,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     audioEngine.stopSfx();
     audioEngine.stopVoice();
     const blob = await finished;
-    downloadBlob(`${slug(ed.project.title)}_${aspect.replace(':', 'x')}_${res}.webm`, blob);
+    downloadBlob(`${slug(ed.project.title)}_${aspect.replace(':', 'x')}_${res}.${ext}`, blob);
     setProgress(null);
     const browserOnly = voiceClips.filter((c) => !voiceBufs.has(c.id)).length;
     setNote(
