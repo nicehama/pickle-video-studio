@@ -11,12 +11,20 @@ import { Pill, SectionTitle, Segmented } from '../ui';
 
 const TARGETS: Lang[] = ['ko', 'en', 'ja', 'es'];
 
+/** 언어별 권장 글자 수 배율 — 영어·스페인어는 같은 내용을 더 많은 글자로 쓴다 */
+const LEN_FACTOR: Record<Lang, number> = { ko: 1, ja: 0.95, en: 2, es: 1.7 };
+
 export function SubtitlePanel() {
   const ed = useEditor();
   const [target, setTarget] = useState<Lang>(ed.project.lang);
+  const pickLang = (l: Lang) => {
+    setTarget(l);
+    ed.commit((p) => ({ ...p, lang: l }));
+  };
   const [busy, setBusy] = useState(false);
   const rows = useMemo(() => subtitleClips(ed.project), [ed.project]);
   const preset = SUBTITLE_PRESETS[ed.project.subtitlePreset];
+  const limit = Math.round(preset.maxChars * LEN_FACTOR[target]) * preset.maxLines;
 
   const setText = (id: string, value: string) => {
     ed.commit((p) => ({
@@ -121,7 +129,7 @@ export function SubtitlePanel() {
 
       <div>
         <div className="mb-1 text-[11px] font-medium text-slate-400">편집 언어</div>
-        <Segmented size="sm" value={target} onChange={setTarget} options={TARGETS.map((l) => ({ value: l, label: LANG_LABEL[l] }))} />
+        <Segmented size="sm" value={target} onChange={pickLang} options={TARGETS.map((l) => ({ value: l, label: LANG_LABEL[l] }))} />
       </div>
 
       <div>
@@ -136,7 +144,7 @@ export function SubtitlePanel() {
           ]}
         />
         <p className="mt-1 text-[10px] leading-snug text-slate-500">
-          {preset.desc} · 줄당 {preset.maxChars}자 권장 · 최대 {preset.maxLines}줄
+          {preset.desc} · {LANG_LABEL[target]} 줄당 {Math.round(preset.maxChars * LEN_FACTOR[target])}자 · 최대 {preset.maxLines}줄
         </p>
         <p className="mt-0.5 truncate text-[9.5px] text-slate-600" title={FONT_STACK[target]}>
           폰트 폴백: {FONT_STACK[target]}
@@ -156,7 +164,7 @@ export function SubtitlePanel() {
         {rows.map((r, i) => {
           const text = subtitleText(r, target);
           const len = text.replace(/\n/g, '').length;
-          const over = len > preset.maxChars * preset.maxLines;
+          const over = len > limit;
           const offset = r.offsetMs ?? 0;
           const missing = target !== 'ko' && !text;
           return (
@@ -175,7 +183,7 @@ export function SubtitlePanel() {
                   {r.start.toFixed(1)}–{(r.start + r.duration).toFixed(1)}s
                 </span>
                 <span className={`font-mono text-[9.5px] ${over ? 'text-rose-300' : 'text-slate-600'}`}>
-                  {len}/{preset.maxChars * preset.maxLines}
+                  {len}/{limit}
                 </span>
                 {over && <Pill tone="bad">길이 초과</Pill>}
                 {missing && <Pill tone="warn">번역 없음</Pill>}
